@@ -54,3 +54,11 @@ results/
 
 
 .DS_Store
+
+# Credential files
+.env
+*.pem
+credentials.json
+config.json
+.aws/
+.qiskit/

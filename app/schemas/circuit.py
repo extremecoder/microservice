@@ -87,6 +87,8 @@ class CircuitExecutionResponse(BaseModel):
         counts: Measurement counts (present for sync execution, null for async)
         execution_time: Execution time in seconds (present for sync execution, null for async)
         estimated_completion_time: Estimated completion time (only for async execution)
+        provider_job_id: ID of the job/task in the provider's system (for cross-referencing)
+        provider_job_status: Status of the job as reported by the provider
         metadata: Additional metadata about the execution or job
     """
     job_id: str = Field(..., description="Job ID")
@@ -97,6 +99,8 @@ class CircuitExecutionResponse(BaseModel):
     estimated_completion_time: Optional[datetime] = Field(
         None, description="Estimated completion time (async only)"
     )
+    provider_job_id: Optional[str] = Field(None, description="Provider-specific job/task ID")
+    provider_job_status: Optional[str] = Field(None, description="Provider-specific job status")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional execution metadata")
 
 
@@ -134,6 +138,8 @@ class JobDetailsResponse(BaseModel):
         backend_type: Backend type
         backend_provider: Provider name
         backend_name: Specific backend name if applicable
+        provider_job_id: ID of the job/task in the provider's system (for cross-referencing)
+        provider_job_status: Status of the job as reported by the provider
         created_at: Job creation time
         completed_at: Job completion time
         result: Job result if completed
@@ -144,6 +150,8 @@ class JobDetailsResponse(BaseModel):
     backend_type: str = Field(..., description="Backend type")
     backend_provider: str = Field(..., description="Provider name")
     backend_name: Optional[str] = Field(None, description="Specific backend name")
+    provider_job_id: Optional[str] = Field(None, description="Provider-specific job/task ID")
+    provider_job_status: Optional[str] = Field(None, description="Provider-specific job status")
     created_at: datetime = Field(..., description="Job creation time")
     completed_at: Optional[datetime] = Field(None, description="Job completion time")
     result: Optional[Dict[str, Any]] = Field(None, description="Job result if completed")

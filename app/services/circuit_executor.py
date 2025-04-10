@@ -38,7 +38,11 @@ except ImportError:
 from app.services.simulation_backends.qiskit_backend import run_qiskit_simulation
 from app.services.simulation_backends.cirq_backend import run_cirq_simulation
 from app.services.simulation_backends.braket_backend import run_braket_simulation
-from app.schemas.circuit import CircuitExecutionResult
+
+# Import hardware runner functions
+from app.services.hardware_runners.ibm_hardware_runner import run_on_ibm_hardware
+from app.services.hardware_runners.aws_hardware_runner import run_on_aws_hardware
+from app.services.hardware_runners.google_hardware_runner import run_on_google_hardware
 
 logger = get_logger(__name__)
 
@@ -200,3 +204,171 @@ async def execute_circuit_with_braket(
     except Exception as e:
         logger.error(f"Error executing circuit with Braket: {str(e)}", exc_info=True)
         raise ValueError(f"Failed to execute circuit with Braket: {str(e)}")
+
+
+async def execute_circuit_with_ibm_hardware(
+    circuit_path: str, parameters: Dict[str, Any], shots: int, device_id: str
+) -> Dict[str, int]:
+    """
+    Execute a quantum circuit on IBM Quantum hardware.
+    
+    Args:
+        circuit_path: Path to the OpenQASM circuit file
+        parameters: Dictionary of circuit parameters
+        shots: Number of execution shots
+        device_id: IBM Quantum device name
+    
+    Returns:
+        Measurement counts
+        
+    Raises:
+        ValueError: If IBM hardware execution fails
+    """
+    # Record start time for execution timing
+    start_time = time.time()
+    
+    try:
+        # Extract additional parameters
+        wait_for_results = parameters.get("wait_for_results", True)
+        poll_timeout_seconds = parameters.get("poll_timeout_seconds", 3600)
+        optimization_level = parameters.get("optimization_level", 1)
+        api_token = parameters.get("api_token", None)
+        
+        # Call the hardware runner
+        result = run_on_ibm_hardware(
+            qasm_file=circuit_path,
+            device_id=device_id,
+            shots=shots,
+            wait_for_results=wait_for_results,
+            poll_timeout_seconds=poll_timeout_seconds,
+            optimization_level=optimization_level,
+            api_token=api_token,
+            **parameters
+        )
+        
+        if result is None:
+            raise ValueError("IBM hardware execution returned no results")
+            
+        # Update execution time in result metadata
+        execution_time = time.time() - start_time
+        result["metadata"]["execution_time"] = execution_time
+        
+        # Return the counts dictionary
+        return result["counts"]
+    except Exception as e:
+        logger.error(f"Error executing circuit on IBM hardware: {str(e)}", exc_info=True)
+        raise ValueError(f"Failed to execute circuit on IBM hardware: {str(e)}")
+
+
+async def execute_circuit_with_aws_hardware(
+    circuit_path: str, parameters: Dict[str, Any], shots: int, device_id: str
+) -> Dict[str, int]:
+    """
+    Execute a quantum circuit on AWS Braket hardware.
+    
+    Args:
+        circuit_path: Path to the OpenQASM circuit file
+        parameters: Dictionary of circuit parameters
+        shots: Number of execution shots
+        device_id: AWS Braket device ARN or name
+    
+    Returns:
+        Measurement counts
+        
+    Raises:
+        ValueError: If AWS hardware execution fails
+    """
+    # Record start time for execution timing
+    start_time = time.time()
+    
+    try:
+        # Extract additional parameters
+        wait_for_results = parameters.get("wait_for_results", True)
+        poll_timeout_seconds = parameters.get("poll_timeout_seconds", 3600)
+        access_key = parameters.get("access_key", None)
+        secret_key = parameters.get("secret_key", None)
+        region = parameters.get("region", None)
+        
+        # Call the hardware runner
+        result = run_on_aws_hardware(
+            qasm_file=circuit_path,
+            device_id=device_id,
+            shots=shots,
+            wait_for_results=wait_for_results,
+            poll_timeout_seconds=poll_timeout_seconds,
+            access_key=access_key,
+            secret_key=secret_key,
+            region=region,
+            **parameters
+        )
+        
+        if result is None:
+            raise ValueError("AWS hardware execution returned no results")
+            
+        # Update execution time in result metadata
+        execution_time = time.time() - start_time
+        if "metadata" in result:
+            result["metadata"]["execution_time"] = execution_time
+        else:
+            # In case the structure is different
+            result["execution_time"] = execution_time
+        
+        # Return the counts dictionary
+        return result.get("counts", {})
+    except Exception as e:
+        logger.error(f"Error executing circuit on AWS hardware: {str(e)}", exc_info=True)
+        raise ValueError(f"Failed to execute circuit on AWS hardware: {str(e)}")
+
+
+async def execute_circuit_with_google_hardware(
+    circuit_path: str, parameters: Dict[str, Any], shots: int, device_id: str
+) -> Dict[str, int]:
+    """
+    Execute a quantum circuit on Google Quantum hardware.
+    
+    Args:
+        circuit_path: Path to the OpenQASM circuit file
+        parameters: Dictionary of circuit parameters
+        shots: Number of execution shots
+        device_id: Google Quantum device name
+    
+    Returns:
+        Measurement counts
+        
+    Raises:
+        ValueError: If Google hardware execution fails
+    """
+    # Record start time for execution timing
+    start_time = time.time()
+    
+    try:
+        # Extract additional parameters
+        wait_for_results = parameters.get("wait_for_results", True)
+        poll_timeout_seconds = parameters.get("poll_timeout_seconds", 3600)
+        auth_file = parameters.get("auth_file", None)
+        project_id = parameters.get("project_id", None)
+        
+        # Call the hardware runner
+        result = run_on_google_hardware(
+            qasm_file=circuit_path,
+            device_id=device_id,
+            shots=shots,
+            wait_for_results=wait_for_results,
+            poll_timeout_seconds=poll_timeout_seconds,
+            auth_file=auth_file,
+            project_id=project_id,
+            **parameters
+        )
+        
+        if result is None:
+            raise ValueError("Google hardware execution returned no results")
+            
+        # Update execution time in result metadata
+        execution_time = time.time() - start_time
+        result["metadata"]["execution_time"] = execution_time
+        
+        # Return the counts dictionary
+        return result["counts"]
+    except Exception as e:
+        logger.error(f"Error executing circuit on Google hardware: {str(e)}", exc_info=True)
+        raise ValueError(f"Failed to execute circuit on Google hardware: {str(e)}")

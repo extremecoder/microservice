@@ -21,6 +21,9 @@ from app.services.circuit_executor import (
     execute_circuit_with_qiskit,
     execute_circuit_with_braket,
     execute_circuit_with_cirq,
+    execute_circuit_with_ibm_hardware,
+    execute_circuit_with_aws_hardware,
+    execute_circuit_with_google_hardware,
     check_provider_availability,
 )
 
@@ -124,7 +127,9 @@ async def execute_circuit(
         "shots": request.shots,
         "backend_type": request.backend_type.value,
         "backend_provider": request.backend_provider,
-        "backend_name": request.backend_name
+        "backend_name": request.backend_name,
+        "provider_job_id": None,  # Will be populated when job is executed
+        "provider_job_status": None  # Will be populated when job is executed
     }
     jobs[job_id] = job
     
@@ -140,8 +145,10 @@ async def execute_circuit(
                     job_id=job_id,
                     status=JobStatus.COMPLETED,
                     execution_mode="sync",
+                    execution_time=result.get("execution_time"),
                     counts=result.get("counts", {}),
-                    execution_time=result.get("execution_time", 0.0),
+                    provider_job_id=job.get("provider_job_id"),  # Include provider job ID
+                    provider_job_status=job.get("provider_job_status"),  # Include provider job status
                     metadata={
                         "backend_type": request.backend_type.value,
                         "backend_provider": request.backend_provider,
@@ -168,6 +175,8 @@ async def execute_circuit(
                 status=JobStatus.QUEUED,
                 execution_mode="async",
                 estimated_completion_time=None,
+                provider_job_id=None,  # Initially None, will be updated after execution
+                provider_job_status=None,  # Initially None, will be updated after execution
                 metadata={
                     "backend_type": request.backend_type.value,
                     "backend_provider": request.backend_provider,
@@ -209,15 +218,26 @@ async def _execute_circuit(job_id: str) -> Dict[str, Any]:
         start_time = time.time()
         
         # Execute on appropriate backend
-        if provider == "qiskit":
-            result = await execute_circuit_with_qiskit(circuit_path, parameters, shots)
-        elif provider == "braket":
-            result = await execute_circuit_with_braket(circuit_path, parameters, shots)
-        elif provider == "cirq":
-            result = await execute_circuit_with_cirq(circuit_path, parameters, shots)
+        if backend_type == "simulator":
+            if provider == "qiskit":
+                result = await execute_circuit_with_qiskit(circuit_path, parameters, shots)
+            elif provider == "braket":
+                result = await execute_circuit_with_braket(circuit_path, parameters, shots)
+            elif provider == "cirq":
+                result = await execute_circuit_with_cirq(circuit_path, parameters, shots)
+            else:
+                raise ValueError(f"Unsupported simulator provider: {provider}")
+        elif backend_type == "hardware":
+            if provider == "ibm":
+                result = await execute_circuit_with_ibm_hardware(circuit_path, parameters, shots, backend_name)
+            elif provider == "aws":
+                result = await execute_circuit_with_aws_hardware(circuit_path, parameters, shots, backend_name)
+            elif provider == "google":
+                result = await execute_circuit_with_google_hardware(circuit_path, parameters, shots, backend_name)
+            else:
+                raise ValueError(f"Unsupported hardware provider: {provider}")
         else:
-            # For hardware providers, we would implement the appropriate adapters
-            raise ValueError(f"Unsupported provider: {provider}")
+            raise ValueError(f"Unsupported backend type: {backend_type}")
         
         execution_time = time.time() - start_time
         
@@ -242,6 +262,34 @@ async def _execute_circuit(job_id: str) -> Dict[str, Any]:
         result_path = f"{RESULTS_DIR}/{job_id}.json"
         with open(result_path, "w") as f:
             json.dump(result_data, f, indent=2)
+        
+        # Check if we have a provider job ID and status in the result metadata
+        if result_data.get("success", False):
+            # Extract provider job ID from metadata
+            metadata = result_data.get("metadata", {})
+            provider_job_id = None
+            provider_job_status = None
+            
+            # Check for provider job ID in different possible fields
+            for id_field in ["task_id", "job_id", "provider_job_id"]:
+                if id_field in metadata:
+                    provider_job_id = metadata[id_field]
+                    break
+            
+            # Check for provider job status in different possible fields
+            for status_field in ["status", "job_status", "provider_status", "task_status"]:
+                if status_field in metadata:
+                    provider_job_status = metadata[status_field]
+                    break
+            
+            # Update job record with provider job ID and status
+            if provider_job_id:
+                job["provider_job_id"] = provider_job_id
+                logger.info(f"Stored provider job ID {provider_job_id} for job {job_id}")
+            
+            if provider_job_status:
+                job["provider_job_status"] = provider_job_status
+                logger.info(f"Stored provider job status {provider_job_status} for job {job_id}")
         
         job["status"] = JobStatus.COMPLETED.value
         logger.info(f"Job {job_id} completed")
