@@ -226,7 +226,7 @@ def run_on_ibm_hardware(qasm_file: str, device_id: str = None, shots: int = 1024
                 'provider': 'IBM',
                 'device': device.name if hasattr(device, 'name') else str(device),
                 'device_id': device_id,
-                'task_id': job_id,
+                'provider_job_id': job_id,
                 'optimization_level': optimization_level
             }
             
@@ -263,7 +263,6 @@ def run_on_ibm_hardware(qasm_file: str, device_id: str = None, shots: int = 1024
                     # Process the job result
                     status_str = job_final_status.name if hasattr(job_final_status, 'name') else str(job_final_status)
                     metadata.update({
-                        'job_id': job_id,
                         'shots': shots,
                         'status': status_str,
                         'execution_time': time.time() - start_time

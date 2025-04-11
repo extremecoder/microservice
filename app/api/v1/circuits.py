@@ -73,51 +73,16 @@ async def execute_circuit(
     Raises:
         HTTPException: If the backend provider is invalid or unavailable
     """
-    # Validate the circuit content
-    if not request.circuit_file or request.circuit_file.strip() == "":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Empty circuit file provided"
-        )
-    
-    # Validate shots parameter
-    if request.shots <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Shots must be a positive integer"
-        )
-    
-    # Validate backend provider
-    if request.backend_type.value == "simulator":
-        valid_providers = ["qiskit", "braket", "cirq"]
-        provider_specific_check = request.backend_provider in valid_providers
-    else:  # hardware
-        valid_providers = ["aws", "ibm", "google"]
-        provider_specific_check = request.backend_provider in valid_providers
-    
-    if not provider_specific_check:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid backend provider for {request.backend_type.value}. "
-                  f"Must be one of: {', '.join(valid_providers)}"
-        )
-    
-    # Check if backend provider is available
-    if not check_provider_availability(request.backend_provider):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{request.backend_provider} backend is not available"
-        )
-    
-    # Generate job ID
     job_id = str(uuid.uuid4())
-    
-    # Save circuit to file
     circuit_path = f"{CIRCUITS_DIR}/{job_id}.qasm"
-    with open(circuit_path, "w") as f:
-        f.write(request.circuit_file)
     
-    # Create job record
+    # Save circuit
+    try:
+        with open(circuit_path, "w") as f:
+            f.write(request.circuit_file)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save circuit file: {str(e)}")
+
     job = {
         "job_id": job_id,
         "status": JobStatus.QUEUED.value,
@@ -128,27 +93,30 @@ async def execute_circuit(
         "backend_type": request.backend_type.value,
         "backend_provider": request.backend_provider,
         "backend_name": request.backend_name,
-        "provider_job_id": None,  # Will be populated when job is executed
-        "provider_job_status": None  # Will be populated when job is executed
+        "provider_job_id": None,  # Initialize provider fields
+        "provider_job_status": None,
     }
     jobs[job_id] = job
     
     # Determine execution mode
     if not request.async_mode:
         # Execute synchronously
-        result = await _execute_circuit(job_id)
+        exec_result = await _execute_circuit(job_id)
         
-        if result.get("success", False):
+        # Refresh job data after execution (it might have been updated with provider info)
+        job = jobs.get(job_id, job) 
+        
+        if exec_result.get("success", False):
             return {
                 "status": "success",
                 "data": CircuitExecutionResponse(
                     job_id=job_id,
-                    status=JobStatus.COMPLETED,
+                    status=job.get("status", JobStatus.COMPLETED.value),
                     execution_mode="sync",
-                    execution_time=result.get("execution_time"),
-                    counts=result.get("counts", {}),
-                    provider_job_id=job.get("provider_job_id"),  # Include provider job ID
-                    provider_job_status=job.get("provider_job_status"),  # Include provider job status
+                    execution_time=exec_result.get("execution_time"),
+                    counts=exec_result.get("counts", {}),
+                    provider_job_id=job.get("provider_job_id"),  # Read from updated job record
+                    provider_job_status=job.get("provider_job_status"), # Read from updated job record
                     metadata={
                         "backend_type": request.backend_type.value,
                         "backend_provider": request.backend_provider,
@@ -162,7 +130,7 @@ async def execute_circuit(
             return {
                 "status": "error",
                 "data": None,
-                "error": result.get("error", "Unknown execution error")
+                "error": exec_result.get("error", "Unknown execution error")
             }
     else:
         # Run in background
@@ -197,7 +165,7 @@ async def _execute_circuit(job_id: str) -> Dict[str, Any]:
         job_id: ID of the job to execute
         
     Returns:
-        Execution results
+        Execution results (including success status, counts/error, metadata)
     """
     if job_id not in jobs:
         logger.error(f"Job {job_id} not found")
@@ -220,41 +188,61 @@ async def _execute_circuit(job_id: str) -> Dict[str, Any]:
         # Execute on appropriate backend
         if backend_type == "simulator":
             if provider == "qiskit":
-                result = await execute_circuit_with_qiskit(circuit_path, parameters, shots)
+                exec_result = await execute_circuit_with_qiskit(circuit_path, parameters, shots)
+                counts = exec_result.get("counts")
+                exec_metadata = exec_result.get("metadata", {})
             elif provider == "braket":
-                result = await execute_circuit_with_braket(circuit_path, parameters, shots)
+                exec_result = await execute_circuit_with_braket(circuit_path, parameters, shots)
+                counts = exec_result.get("counts")
+                exec_metadata = exec_result.get("metadata", {})
             elif provider == "cirq":
-                result = await execute_circuit_with_cirq(circuit_path, parameters, shots)
+                exec_result = await execute_circuit_with_cirq(circuit_path, parameters, shots)
+                counts = exec_result.get("counts")
+                exec_metadata = exec_result.get("metadata", {})
             else:
                 raise ValueError(f"Unsupported simulator provider: {provider}")
         elif backend_type == "hardware":
             if provider == "ibm":
-                result = await execute_circuit_with_ibm_hardware(circuit_path, parameters, shots, backend_name)
+                exec_result = await execute_circuit_with_ibm_hardware(circuit_path, parameters, shots, backend_name)
             elif provider == "aws":
-                result = await execute_circuit_with_aws_hardware(circuit_path, parameters, shots, backend_name)
+                exec_result = await execute_circuit_with_aws_hardware(circuit_path, parameters, shots, backend_name)
             elif provider == "google":
-                result = await execute_circuit_with_google_hardware(circuit_path, parameters, shots, backend_name)
+                exec_result = await execute_circuit_with_google_hardware(circuit_path, parameters, shots, backend_name)
             else:
                 raise ValueError(f"Unsupported hardware provider: {provider}")
+                
+            # Extract counts and metadata from the full result
+            counts = exec_result.get("counts")
+            exec_metadata = exec_result.get("metadata", {})
         else:
             raise ValueError(f"Unsupported backend type: {backend_type}")
         
         execution_time = time.time() - start_time
         
-        # Save results
+        # Update job record with provider details from metadata
+        job["provider_job_id"] = exec_metadata.get("provider_job_id")
+        job["provider_job_status"] = exec_metadata.get("status")
+        job["status"] = JobStatus.COMPLETED.value
+        logger.info(f"Stored provider job ID {job['provider_job_id']} for job {job_id}")
+        logger.info(f"Job {job_id} completed")
+
+        # Save results (including updated metadata)
         result_data = {
-            "counts": result,
-            "execution_time": execution_time,
+            "counts": counts,
+            "execution_time": execution_time, 
             "metadata": {
                 "circuit_file": os.path.basename(circuit_path),
                 "job_id": job_id,
+                "provider_job_id": job["provider_job_id"],  # Include in saved results
+                "provider_job_status": job["provider_job_status"],
                 "backend_type": backend_type,
                 "backend_provider": provider,
                 "backend_name": backend_name,
                 "shots": shots,
                 "parameters": parameters,
                 "created_at": job["created_at"],
-                "completed_at": datetime.now().isoformat()
+                "completed_at": datetime.now().isoformat(),
+                **exec_metadata # Include any other metadata from the runner
             },
             "success": True
         }
@@ -263,62 +251,20 @@ async def _execute_circuit(job_id: str) -> Dict[str, Any]:
         with open(result_path, "w") as f:
             json.dump(result_data, f, indent=2)
         
-        # Check if we have a provider job ID and status in the result metadata
-        if result_data.get("success", False):
-            # Extract provider job ID from metadata
-            metadata = result_data.get("metadata", {})
-            provider_job_id = None
-            provider_job_status = None
-            
-            # Check for provider job ID in different possible fields
-            for id_field in ["task_id", "job_id", "provider_job_id"]:
-                if id_field in metadata:
-                    provider_job_id = metadata[id_field]
-                    break
-            
-            # Check for provider job status in different possible fields
-            for status_field in ["status", "job_status", "provider_status", "task_status"]:
-                if status_field in metadata:
-                    provider_job_status = metadata[status_field]
-                    break
-            
-            # Update job record with provider job ID and status
-            if provider_job_id:
-                job["provider_job_id"] = provider_job_id
-                logger.info(f"Stored provider job ID {provider_job_id} for job {job_id}")
-            
-            if provider_job_status:
-                job["provider_job_status"] = provider_job_status
-                logger.info(f"Stored provider job status {provider_job_status} for job {job_id}")
-        
-        job["status"] = JobStatus.COMPLETED.value
-        logger.info(f"Job {job_id} completed")
-        
-        return result_data
-        
+        return result_data # Return the full result data
+
     except Exception as e:
-        logger.error(f"Error executing job {job_id}: {e}")
+        error_msg = f"Error executing job {job_id}: {str(e)}"
+        logger.error(error_msg, exc_info=True)
         job["status"] = JobStatus.FAILED.value
         
-        # Save error
-        error_data = {
-            "error": str(e),
-            "metadata": {
-                "circuit_file": os.path.basename(job["circuit_path"]),
-                "job_id": job_id,
-                "backend_type": job["backend_type"],
-                "backend_provider": job["backend_provider"],
-                "backend_name": job["backend_name"],
-                "shots": job["shots"],
-                "parameters": job["parameters"],
-                "created_at": job["created_at"],
-                "failed_at": datetime.now().isoformat()
-            },
-            "success": False
-        }
-        
+        # Save error information
+        result_data = {"success": False, "error": error_msg, "counts": None, "metadata": {}}
         result_path = f"{RESULTS_DIR}/{job_id}.json"
-        with open(result_path, "w") as f:
-            json.dump(error_data, f, indent=2)
-        
-        return error_data
+        try:
+            with open(result_path, "w") as f:
+                json.dump(result_data, f, indent=2)
+        except Exception as write_e:
+            logger.error(f"Failed to write error results for job {job_id}: {write_e}")
+            
+        return result_data

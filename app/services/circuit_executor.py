@@ -249,12 +249,13 @@ async def execute_circuit_with_ibm_hardware(
         if result is None:
             raise ValueError("IBM hardware execution returned no results")
             
-        # Update execution time in result metadata
+        # Update execution time in result metadata (if metadata exists)
         execution_time = time.time() - start_time
-        result["metadata"]["execution_time"] = execution_time
+        if "metadata" in result and isinstance(result["metadata"], dict):
+            result["metadata"]["execution_time"] = execution_time
         
-        # Return the counts dictionary
-        return result["counts"]
+        # Return the full result dictionary (contains counts and metadata)
+        return result
     except Exception as e:
         logger.error(f"Error executing circuit on IBM hardware: {str(e)}", exc_info=True)
         raise ValueError(f"Failed to execute circuit on IBM hardware: {str(e)}")
