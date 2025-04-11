@@ -9,6 +9,9 @@ import json
 import logging
 from typing import Dict, Any, Optional
 
+# Import JobStatus here
+from qiskit.providers.jobstatus import JobStatus
+
 logger = logging.getLogger(__name__)
 
 def run_on_ibm_hardware(qasm_file: str, device_id: str = None, shots: int = 1024,
@@ -212,7 +215,6 @@ def run_on_ibm_hardware(qasm_file: str, device_id: str = None, shots: int = 1024
                 transpiled = transpile(circuit, backend=device, optimization_level=optimization_level)
                 
                 # Submit the job
-                from qiskit.providers.jobstatus import JobStatus
                 logger.info(f"Submitting job to {device.name}")
                 job = device.run(transpiled, shots=shots)
                 job_id = job.job_id()
@@ -251,14 +253,19 @@ def run_on_ibm_hardware(qasm_file: str, device_id: str = None, shots: int = 1024
                     time.sleep(30)  # Sleep for 30 seconds between polls
                 
                 # Check if job completed successfully
-                if job and job.status() == JobStatus.DONE and wait_for_results:
+                job_final_status = job.status()
+                logger.info(f"Final job status check. Type: {type(job_final_status)}, Value: {job_final_status}")
+                
+                # Modify the condition to check for both enum and string "DONE"
+                if job and wait_for_results and (job_final_status == JobStatus.DONE or str(job_final_status).upper() == "DONE"):
                     logger.info("Job completed successfully!")
                     
                     # Process the job result
+                    status_str = job_final_status.name if hasattr(job_final_status, 'name') else str(job_final_status)
                     metadata.update({
                         'job_id': job_id,
                         'shots': shots,
-                        'status': job.status().name,
+                        'status': status_str,
                         'execution_time': time.time() - start_time
                     })
                     
@@ -288,61 +295,91 @@ def run_on_ibm_hardware(qasm_file: str, device_id: str = None, shots: int = 1024
                         
                         # PrimitiveResult format (IBM Qiskit Runtime)
                         elif hasattr(result, '_pub_results') and result._pub_results:
-                            logger.info("Processing PrimitiveResult format")
-                            
-                            try:
-                                # Get the classical register name from the circuit
-                                creg_name = "c"  # Default name in test_circuit.qasm
-                                
+                            logger.info("Processing PrimitiveResult format (SamplerV2)")
+                            logger.info(f"_pub_results length: {len(result._pub_results)}")
+
+                            if len(result._pub_results) > 0:
+                                pub_result = result._pub_results[0]
+                                logger.info(f"pub_result type: {type(pub_result)}")
+                                logger.debug(f"pub_result attributes: {dir(pub_result)}")
+
+                                # Get classical register name
+                                creg_name = None
                                 if hasattr(circuit, 'cregs') and circuit.cregs:
+                                    # Assuming the first classical register is the one used for measurements
                                     creg_name = circuit.cregs[0].name
-                                    logger.info(f"Found classical register name: {creg_name}")
+                                    logger.info(f"Found classical register name from circuit: {creg_name}")
                                 else:
-                                    logger.info(f"Using default classical register name: {creg_name}")
-                                
-                                # Following the pattern from the example:
-                                # pub_result = job_result[<idx>].data.<classical register>.get_counts()
-                                if len(result._pub_results) > 0:
-                                    pub_result = result._pub_results[0]
-                                    
-                                    # Debug the pub_result
-                                    logger.info(f"pub_result type: {type(pub_result)}")
-                                    if hasattr(pub_result, '__dict__'):
-                                        logger.info(f"pub_result attributes: {dir(pub_result)}")
-                                    
-                                    # Try to access the data attribute
-                                    if hasattr(pub_result, 'data'):
-                                        data = pub_result.data
-                                        logger.info(f"data type: {type(data)}")
-                                        if hasattr(data, '__dict__'):
-                                            logger.info(f"data attributes: {dir(data)}")
-                                        
-                                        # Try to access the classical register data
-                                        if hasattr(data, creg_name):
-                                            creg_data = getattr(data, creg_name)
-                                            logger.info(f"creg_data type: {type(creg_data)}")
-                                            
-                                            # Try to get the counts
+                                    # Fallback if no cregs found (might happen with transpiled circuits)
+                                    # We can try a common default or inspect data attributes later
+                                    logger.warning("Could not find classical register name in circuit object. Will try common names or inspect data.")
+                                    # Defaulting to 'c' as seen in test_circuit.qasm
+                                    creg_name = "c" 
+
+                                # Try to extract counts as shown in the successful debug script
+                                if hasattr(pub_result, 'data'):
+                                    logger.debug(f"pub_result.data type: {type(pub_result.data)}")
+                                    logger.debug(f"pub_result.data attributes: {dir(pub_result.data)}")
+
+                                    # Function to attempt extraction with a given register name
+                                    def attempt_extraction(reg_name):
+                                        if reg_name and hasattr(pub_result.data, reg_name):
+                                            creg_data = getattr(pub_result.data, reg_name)
+                                            logger.info(f"Attempting extraction with register name: {reg_name}")
+                                            logger.debug(f"creg_data type: {type(creg_data)}")
+                                            logger.debug(f"creg_data attributes: {dir(creg_data)}")
+
                                             if hasattr(creg_data, 'get_counts'):
-                                                result_counts = creg_data.get_counts()
-                                                logger.info(f"Successfully extracted counts: {result_counts}")
+                                                try:
+                                                    counts = creg_data.get_counts()
+                                                    logger.info(f"Counts extracted successfully using register '{reg_name}': {counts}")
+                                                    return counts
+                                                except Exception as e:
+                                                    logger.warning(f"Error calling get_counts on register '{reg_name}': {e}")
                                             else:
-                                                logger.warning(f"creg_data has no get_counts method")
-                                                if hasattr(creg_data, '__dict__'):
-                                                    logger.info(f"creg_data attributes: {dir(creg_data)}")
+                                                logger.warning(f"Register data for '{reg_name}' has no get_counts method.")
                                         else:
-                                            logger.warning(f"data has no attribute named {creg_name}")
-                                            # List all attributes to help debugging
-                                            for attr_name in dir(data):
-                                                if not attr_name.startswith('__'):
-                                                    logger.info(f"Available data attribute: {attr_name}")
+                                            logger.debug(f"pub_result.data has no attribute named '{reg_name}'")
+                                        return None
+
+                                    # Try with the determined or default classical register name first
+                                    extracted_counts = attempt_extraction(creg_name)
+
+                                    # If failed, try common default names or inspect other attributes
+                                    if extracted_counts is None:
+                                        logger.info("Primary extraction failed. Trying common register names or inspecting attributes.")
+                                        common_names = ['c', 'meas', 'measurement'] # Add other potential names if needed
+                                        if creg_name in common_names: # Avoid re-trying the same name
+                                            common_names.remove(creg_name)
+                                            
+                                        for name in common_names:
+                                            extracted_counts = attempt_extraction(name)
+                                            if extracted_counts is not None:
+                                                break # Stop if successful
+
+                                    # If still None, inspect all attributes of pub_result.data
+                                    if extracted_counts is None:
+                                        logger.warning("Could not extract counts using known/common register names. Inspecting all data attributes.")
+                                        for attr in dir(pub_result.data):
+                                            if not attr.startswith('_'):
+                                                logger.debug(f"Inspecting attribute: {attr}")
+                                                attr_value = getattr(pub_result.data, attr)
+                                                if hasattr(attr_value, 'get_counts'):
+                                                    logger.info(f"Found get_counts method on attribute: {attr}. Attempting extraction.")
+                                                    extracted_counts = attempt_extraction(attr)
+                                                    if extracted_counts is not None:
+                                                        break # Stop if successful
+                                                        
+                                    # Assign to result_counts if extraction was successful
+                                    if extracted_counts is not None:
+                                        result_counts = extracted_counts
                                     else:
-                                        logger.warning("pub_result has no data attribute")
+                                        logger.error("Failed to extract counts from pub_result.data using all known methods.")
+
                                 else:
-                                    logger.warning("No pub_results available")
-                            except Exception as e:
-                                logger.error(f"Error processing PrimitiveResult: {str(e)}")
-                                logger.error(f"Error type: {type(e)}")
+                                    logger.error("pub_result has no data attribute")
+                            else:
+                                logger.error("result has no _pub_results attribute or it's empty")
                         
                         # If we found valid counts, use them
                         if result_counts is not None:
