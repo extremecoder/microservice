@@ -42,7 +42,7 @@ class CircuitExecutionRequest(BaseModel):
         async_mode: Boolean flag for asynchronous execution
         parameters: Dictionary of circuit parameters if the circuit is parameterized
     """
-    circuit_file: str = Field(..., description="OpenQASM circuit file content")
+    circuit_file: Optional[str] = Field(None, description="OpenQASM circuit file content")
     shots: int = Field(1024, description="Number of execution shots")
     backend_type: BackendType = Field(..., description="Backend type (simulator or hardware)")
     backend_provider: str = Field(..., description="Provider name")

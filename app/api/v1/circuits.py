@@ -75,7 +75,32 @@ async def execute_circuit(
     """
     job_id = str(uuid.uuid4())
     circuit_path = f"{CIRCUITS_DIR}/{job_id}.qasm"
-    
+    # If no circuit provided, try reading default circuit
+    if request.circuit_file is None:
+        default_circuit_dir = os.path.join(CIRCUITS_DIR, "default")
+        try:
+            # List files in the default directory
+            default_files = [f for f in os.listdir(default_circuit_dir) if os.path.isfile(os.path.join(default_circuit_dir, f))]
+            if not default_files:
+                raise FileNotFoundError("No files found in default circuit directory")
+
+            # Take the first file found
+            default_file_path = os.path.join(default_circuit_dir, default_files[0])
+            logger.info(f"No circuit provided, using default: {default_file_path}")
+            with open(default_file_path, "r") as f:
+                request.circuit_file = f.read()
+        except FileNotFoundError:
+             raise HTTPException(
+                status_code=400,
+                detail=f"No circuit provided and default circuit directory '{default_circuit_dir}' not found or empty."
+            )
+        except Exception as e:
+            logger.error(f"Error reading default circuit from {default_circuit_dir}: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=500, # Use 500 for unexpected server errors
+                detail=f"Error reading default circuit file: {str(e)}"
+            )
+
     # Save circuit
     try:
         with open(circuit_path, "w") as f:

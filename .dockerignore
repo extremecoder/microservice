@@ -1,0 +1,35 @@
+# Git files
+.git
+.gitignore
+
+# Python cache and virtual environment
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# IDE configuration
+.vscode/
+.idea/
+
+# Testing artifacts
+*.pytest_cache/
+htmlcov/
+.coverage
+coverage_report/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Other potentially unnecessary files
+*.log
+*.tmp
+docs/
+tests/ # If you don't need tests in the final image
+*.md # If you don't need markdown docs
+
