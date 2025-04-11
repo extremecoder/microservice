@@ -27,7 +27,7 @@ def test_hardware(provider: str) -> Dict[str, Any]:
     
     # Create the payload
     payload = {
-        "circuit_file": circuit,
+        
         "shots": 1024,
         "backend_type": "hardware",
         "backend_provider": provider,
