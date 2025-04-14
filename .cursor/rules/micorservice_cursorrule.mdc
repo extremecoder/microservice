@@ -1,0 +1,109 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+### 🔄 Project Setup, Awareness & Context
+- **Always read @PRD.md or `PRD.md`** at the start of a new conversation to understand the project's architecture, goals, style, and constraints.
+- **Check @TASK.md or `TASK.md`** before starting a new task. If the task isn’t listed, add it with a brief description and today's date.
+- **Use consistent naming conventions, file structure, and architecture patterns** as described in @PRD.md or `PRD.md`.
+
+# Python API Development Rules
+rules:
+  # Code Style & Quality
+  - name: follow_pep8
+    description: "Follow PEP 8 style guide for all Python code"
+    
+  - name: use_type_hints
+    description: "Use type hints for all function parameters and return values"
+    
+  - name: max_line_length
+    description: "Limit line length to 88 characters (Black formatter standard)"
+    
+  - name: docstrings_required
+    description: "Write Google-style docstrings for all functions, classes, and modules"
+
+  # API Design
+  - name: consistent_response_format
+    description: "Use consistent JSON response format with status, data, and error fields"
+    
+  - name: versioned_endpoints
+    description: "Version all API endpoints (e.g., /api/v1/resource)"
+    
+  - name: use_http_methods
+    description: "Use appropriate HTTP methods (GET, POST, PUT, DELETE) for CRUD operations"
+    
+  - name: descriptive_status_codes
+    description: "Use appropriate HTTP status codes with descriptive messages"
+
+  # Security
+  - name: input_validation
+    description: "Validate all user input using Pydantic or equivalent"
+    
+  - name: sanitize_output
+    description: "Sanitize all API responses to prevent data leakage"
+    
+  - name: rate_limiting
+    description: "Implement rate limiting for all public endpoints"
+    
+  - name: auth_required
+    description: "Require authentication for sensitive operations"
+
+  # Testing
+  - name: test_coverage
+    description: "Maintain minimum 80% test coverage for all API endpoints"
+    
+  - name: test_happy_path
+    description: "Test the expected/happy path for each endpoint"
+    
+  - name: test_edge_cases
+    description: "Test edge cases for each endpoint"
+    
+  - name: test_error_handling
+    description: "Test error handling for each endpoint"
+
+  # Performance
+  - name: optimize_queries
+    description: "Optimize database queries to minimize response time"
+    
+  - name: pagination
+    description: "Implement pagination for endpoints returning multiple items"
+    
+  - name: caching
+    description: "Use appropriate caching strategies for frequently accessed data"
+    
+  # Documentation
+  - name: openapi_spec
+    description: "Document all endpoints with OpenAPI/Swagger annotations"
+    
+  - name: example_requests
+    description: "Include example requests and responses in documentation"
+    
+  # Dependencies
+  - name: pin_dependencies
+    description: "Pin all dependencies with exact versions in requirements.txt"
+    
+  - name: minimize_dependencies
+    description: "Minimize external dependencies to reduce security risks"
+
+  - name: update_requirements
+    description: "Update requirements.txt after adding new dependencies"
+
+  - name: install_requirements
+    description: "Install dependencies from requirements.txt"
+    
+  - name: quantum_libraries
+    description: "Do not modify any qiskit, circ, amazon-braket libraries and existing version in the requirements.txt"
+
+  - **Always create pyenv virtualenv if not exists** and switch to it while working in this project.
+  
+  - **Always create requirements.txt if not exists** and update the virtual environment by installing @requirements.txt.
+  
+  - **Never install python package directly on the terminal** but firstly update requirements.txt file then pip install the requirements.txt
+  
+  # Logging
+  - name: structured_logging
+    description: "Use structured logging with appropriate log levels"
+    
+  - name: log_request_details
+    description: "Log request details, timing, and outcome for debugging"
