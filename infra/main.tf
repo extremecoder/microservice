@@ -27,20 +27,10 @@ module "eks" {
   vpc_id          = "vpc-0b43409b967dc118f"                        # Your VPC ID
 
   # Add this block
-  access_config = {
-    endpoint_public_access  = true
-    endpoint_private_access = true
-  }
+  cluster_endpoint_public_access  = true
+  cluster_endpoint_private_access = true
 
-  manage_aws_auth_configmap = true
-
-  aws_auth_users = [
-    {
-      userarn  = "arn:aws:iam::816069124994:user/admin"
-      username = "admin"
-      groups   = ["system:masters"]
-    }
-  ]
+  enable_cluster_creator_admin_permissions = true
   
   eks_managed_node_groups = {
     default = {
