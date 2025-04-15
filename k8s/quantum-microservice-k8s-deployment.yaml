@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quantum-microservice-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quantum-microservice
+  template:
+    metadata:
+      labels:
+        app: quantum-microservice
+    spec:
+      containers:
+      - name: quantum-microservice
+        image: abhishekt/quantum-microservice:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8889
+        env:
+        - name: IBM_QUANTUM_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: ibm-quantum-secret
+              key: token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: quantum-microservice-service
+spec:
+  selector:
+    app: quantum-microservice
+  type: LoadBalancer
+  ports:
+    - protocol: TCP
+      port: 8889
+      targetPort: 8889

@@ -1,0 +1,45 @@
+name: Minimal EKS Deploy
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+
+    - name: Terraform init and apply
+      working-directory: infra
+      run: |
+        terraform init
+        terraform apply -auto-approve
+
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Update kubeconfig for EKS
+      run: aws eks update-kubeconfig --region us-east-1 --name eks1
+
+    - name: Create IBM Quantum secret in EKS
+      run: |
+        kubectl create secret generic ibm-quantum-secret \
+          --from-literal=token=${{ secrets.IBM_QUANTUM_TOKEN }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Deploy Docker image to EKS
+      run: kubectl apply -f k8s/quantum-microservice-k8s-deployment.yaml

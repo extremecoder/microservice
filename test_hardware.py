@@ -7,7 +7,7 @@ import json
 import time
 from typing import Dict, Any
 
-API_URL = "http://localhost:8889/api/v1/circuits/execute"
+API_URL = "http://localhost/api/v1/circuits/execute"
 
 def test_hardware(provider: str) -> Dict[str, Any]:
     """
@@ -22,8 +22,8 @@ def test_hardware(provider: str) -> Dict[str, Any]:
     print(f"\n===== Testing {provider} hardware =====")
     
     # Read the QASM file
-    with open("test_circuit.qasm", "r") as f:
-        circuit = f.read()
+    # with open("test_circuit.qasm", "r") as f:
+    #     circuit = f.read()
     
     # Create the payload
     payload = {
