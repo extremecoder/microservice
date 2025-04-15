@@ -24,9 +24,9 @@ jobs:
       working-directory: infra
       run: terraform init
 
-    - name: Terraform Import EKS Cluster
-      working-directory: infra
-      run: terraform import module.eks.aws_eks_cluster.this[0] eks1
+    # - name: Terraform Import EKS Cluster
+    #   working-directory: infra
+    #   run: terraform import module.eks.aws_eks_cluster.this[0] eks1
 
     - name: Terraform Apply (inject aws-auth)
       working-directory: infra
