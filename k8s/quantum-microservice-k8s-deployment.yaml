@@ -15,7 +15,7 @@ spec:
       containers:
       - name: quantum-microservice
         image: abhishekt/quantum-microservice:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 8889
         env:

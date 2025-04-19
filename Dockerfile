@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 # Copy the entire project directory contents into /microservice
 COPY . /microservice
 
+ENV PIP_DEFAULT_TIMEOUT=300
+ENV PIP_NO_CACHE_DIR=1
 # Install any needed packages specified in requirements.txt
 # Use --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir --upgrade pip
