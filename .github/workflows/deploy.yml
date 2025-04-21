@@ -6,6 +6,9 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions: # Needed for OIDC if using aws-actions/configure-aws-credentials@v4 with OIDC
+      id-token: write
+      contents: read
 
     steps:
     - name: Checkout code
@@ -17,21 +20,43 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: us-east-1
+        # role-to-assume: arn:aws:iam::ACCOUNT-ID-WITHOUT-HYPHENS:role/MyGitHubActionRole # Use OIDC for better security if possible
+        # role-session-name: GitHubActionsDeploy
 
     - name: Set up Terraform
       uses: hashicorp/setup-terraform@v3
 
-    - name: Terraform Init # Step 7: Initialize Terraform early
+    - name: Terraform Init
       working-directory: infra
       run: terraform init
 
     - name: Set up kubectl
       uses: azure/setup-kubectl@v3
       with:
-        version: 'v1.28.0' # Use a specific version consistent with other workflows if needed
+        version: 'v1.28.0'
 
     - name: Update kubeconfig for EKS
       run: aws eks update-kubeconfig --region us-east-1 --name eks1 # Make sure cluster name 'eks1' is correct
+
+    # --- Docker Build and Push Steps --- 
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and push multi-platform Docker image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: ./Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: abhishekt/quantum-microservice:latest
+    # --- End Docker Steps --- 
 
     - name: Create/Update IBM Quantum secret in EKS
       run: |
@@ -39,11 +64,17 @@ jobs:
           --from-literal=token=${{ secrets.IBM_QUANTUM_TOKEN }} \
           --dry-run=client -o yaml | kubectl apply -f -
 
-    - name: Deploy Kubernetes Manifests # Step 8: Apply K8s resources
-      run: kubectl apply -f k8s/quantum-microservice-k8s-deployment.yaml
+    - name: Deploy Kubernetes Manifests # Apply K8s resources (will pull new image)
+      run: |
+        # Optional: Trigger rollout explicitly if ImagePullPolicy isn't Always
+        # kubectl rollout restart deployment quantum-microservice-deployment -n default
+        kubectl apply -f k8s/quantum-microservice-k8s-deployment.yaml
 
-    - name: Wait for Ingress and Get ALB DNS Name # Step 9: Wait and get DNS
-      id: get_alb_dns # Give this step an ID to reference its output
+    - name: Wait for Deployment Rollout
+      run: kubectl rollout status deployment quantum-microservice-deployment -n default --timeout=5m
+
+    - name: Wait for Ingress and Get ALB DNS Name
+      id: get_alb_dns
       run: |
         echo "Waiting for ALB Ingress to provision..."
         # Wait for the Ingress status to have a loadBalancer entry (up to 5 minutes)
@@ -68,15 +99,23 @@ jobs:
         echo "ALB_DNS_NAME=${ALB_DNS_NAME}" >> $GITHUB_ENV
         echo "alb_hostname=${ALB_DNS_NAME}" >> $GITHUB_OUTPUT # Output for potential use in other steps/jobs
 
-    - name: Apply Terraform (EKS + API Gateway) # Step 10: Apply all TF with DNS name
-      id: tf_apply # Give step an ID to reference output
+    - name: Apply Terraform (EKS + API Gateway)
+      id: tf_apply
       working-directory: infra
       run: |
         terraform apply -var="alb_dns_name=${{ env.ALB_DNS_NAME }}" -auto-approve
         echo "invoke_url=$(terraform output -raw api_gateway_invoke_url)" >> $GITHUB_OUTPUT
 
-    - name: Test API Gateway Health Endpoint # Step 11 (Optional): Test endpoint
+    - name: Test API Gateway Endpoints
       run: |
-        echo "Testing API Gateway endpoint: ${{ steps.tf_apply.outputs.invoke_url }}/api/v1/health"
-        curl -sf ${{ steps.tf_apply.outputs.invoke_url }}/api/v1/health || exit 1
-        echo "API Gateway health check successful!"
+        API_URL="${{ steps.tf_apply.outputs.invoke_url }}"
+        echo "Testing API Gateway Health endpoint: ${API_URL}/api/v1/health"
+        curl -sf "${API_URL}/api/v1/health" || exit 1
+        echo "Health check successful!"
+
+        echo "Testing API Gateway Circuit Execution endpoint: ${API_URL}/api/v1/circuits/execute"
+        # Use a simple JSON payload for testing
+        curl -sf -X POST -H "Content-Type: application/json" \
+          -d '{"circuit_file": "OPENQASM 2.0; include \"qelib1.inc\"; qreg q[1]; creg c[1]; h q[0]; measure q[0] -> c[0];", "shots": 10, "backend_type": "simulator", "backend_provider": "qiskit", "async_mode": false}' \
+          "${API_URL}/api/v1/circuits/execute" || exit 1
+        echo "Circuit execution test successful!"

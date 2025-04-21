@@ -1,13 +1,15 @@
-Goal is to implement flow 
-Client → HTTPS → API Gateway → HTTP → ALB Ingress → Kubernetes Service → Pod
+Goal is to implement flow:
+`Client → HTTPS → API Gateway → HTTP → ALB Ingress → Kubernetes Service → Pod`
 
-Where in I already have the EKS cluster up and running
-AWS Ingress Controller is also installed
-AWS Load Balancer Ingress is also up and running
-My API is already up and running over http with url
-http://k8s-default-quantumm-be275525f6-1236523312.us-east-1.elb.amazonaws.com/api/v1/circuits/execute
+Where the EKS cluster, ALB Ingress Controller, and the underlying service are running.
 
-e.g post request
+**The primary public endpoint is now the API Gateway URL:**
+`https://1i4mft2f86.execute-api.us-east-1.amazonaws.com`
+
+All API calls should be directed to this HTTPS endpoint.
+
+Example `POST` request for circuit execution:
+```bash
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{
@@ -17,59 +19,53 @@ curl -X POST \
     "backend_provider": "qiskit",
     "async_mode": false
   }' \
-  http://k8s-default-quantumm-be275525f6-1236523312.us-east-1.elb.amazonaws.com/api/v1/circuits/execute
+  https://1i4mft2f86.execute-api.us-east-1.amazonaws.com/api/v1/circuits/execute # Updated URL
+```
 
+---
 
+### Flow Details
 
-Client → HTTPS → API Gateway
+#### Client → HTTPS → API Gateway
 
-Client initiates request: The client makes an HTTPS request to the API Gateway endpoint (e.g., https://abcd1234.execute-api.us-east-1.amazonaws.com/prod/api/v1/circuits/execute)
-TLS handshake: The client and API Gateway establish an encrypted HTTPS connection. AWS manages all certificates for the API Gateway domain.
-API Gateway processing:
+1.  **Client initiates request:** The client makes an HTTPS request to the API Gateway endpoint (e.g., `https://1i4mft2f86.execute-api.us-east-1.amazonaws.com/api/v1/circuits/execute`).
+2.  **TLS handshake:** The client and API Gateway establish an encrypted HTTPS connection. AWS manages the certificate for the `*.execute-api.us-east-1.amazonaws.com` domain.
+3.  **API Gateway processing:**
+    *   Validates the request syntax.
+    *   Applies any configured authorizers (if authentication is set up).
+    *   Checks API keys and usage plans (if configured).
+    *   Applies any request throttling/quota rules.
+    *   Matches the route (`ANY /{proxy+}`).
 
-Validates the request syntax
-Applies any configured authorizers (if authentication is set up)
-Checks API keys and usage plans (if configured)
-Applies any request throttling/quota rules
-Executes request transformations (if configured)
+#### API Gateway → HTTP → ALB Ingress
 
+1.  **Integration execution:** Based on the integration (`http://<alb-dns>:80/{proxy}`), API Gateway forwards the request to your ALB endpoint using **HTTP**.
+2.  **Path preservation:** The path matched by `{proxy+}` (e.g., `/api/v1/circuits/execute`) is appended to the integration base URI.
+3.  **HTTP headers:** API Gateway adds headers like `X-Forwarded-For`, `X-Forwarded-Proto: https`, etc.
 
+#### ALB Ingress → Kubernetes Service
 
-API Gateway → HTTP → ALB Ingress
+1.  **ALB receives request:** The ALB receives the **HTTP** request from API Gateway on port 80.
+2.  **Ingress rules processing:** The AWS Load Balancer Controller translates your Kubernetes Ingress rules into ALB listener rules
+3.  **Path-based routing:** The ALB examines the path in the request and determines which target group (Kubernetes service) should receive the traffic
+4.  **Health check verification:** The ALB confirms the target is healthy before forwarding traffic
+5.  **Connection to target:** The ALB establishes a connection with a healthy pod (via the Kubernetes service)
 
-Integration execution: API Gateway forwards the request to your ALB endpoint using HTTP (not HTTPS)
-Path preservation: The original path is typically preserved in the forwarded request. For example, if the original request was to /api/v1/circuits/execute, the same path is forwarded to the ALB.
-HTTP headers: API Gateway adds some headers to the request, including:
+#### Kubernetes Service → Pod
 
-X-Forwarded-For: The client's IP address
-X-Forwarded-Proto: The original protocol (https)
-Custom integration headers (if configured)
+1.  **Service receives traffic:** The Kubernetes service receives the request from the ALB.
+2.  **Load balancing:** kube-proxy (or equivalent CNI) routes traffic to a healthy pod.
+3.  **Network translation:** The service's ClusterIP is translated to a specific pod IP.
+4.  **Pod receives request:** The pod's Uvicorn server (configured with `--proxy-headers`) receives the **HTTP** request and processes it using the FastAPI application.
+5.  **Response path:** The response follows the same path in reverse: Pod → Service → ALB → API Gateway → Client.
 
+This multi-layered architecture provides client-facing HTTPS termination at the API Gateway, while allowing internal communication over HTTP for simplicity.
 
+---
 
-ALB Ingress → Kubernetes Service
+### Implementation Task List (Completed)
 
-ALB receives request: The ALB receives the HTTP request from API Gateway
-Ingress rules processing: The AWS Load Balancer Controller translates your Kubernetes Ingress rules into ALB listener rules
-Path-based routing: The ALB examines the path in the request and determines which target group (Kubernetes service) should receive the traffic
-Health check verification: The ALB confirms the target is healthy before forwarding traffic
-Connection to target: The ALB establishes a connection with a healthy pod (via the Kubernetes service)
-
-Kubernetes Service → Pod
-
-Service receives traffic: The Kubernetes service receives the request from the ALB
-Load balancing: kube-proxy (or an alternative CNI) routes traffic to one of the available pods based on the service's load balancing algorithm
-Network translation: The service's ClusterIP is translated to a specific pod IP address
-Pod receives request: The pod receives the HTTP request and processes it
-Response path: The response follows the same path in reverse: Pod → Service → ALB → API Gateway → Client
-
-This multi-layered architecture provides flexibility, security, and separation of concerns between the public-facing API management and the internal service routing.
-
-
-
-Got it. Thanks for the clarification. If you don't have an ACM certificate and intend for the API Gateway to communicate with the ALB over HTTP, that simplifies things. The API Gateway will handle the HTTPS termination for the client.
-
-Here's the revised task breakdown reflecting that the connection between API Gateway and ALB will be HTTP:
+**(The following section details the steps taken to achieve the above setup)**
 
 **Goal:** Put an AWS API Gateway (HTTP API type) in front of your existing ALB Ingress using Terraform, orchestrated by a CI/CD pipeline. The connection flow will be `Client → HTTPS → API Gateway → HTTP → ALB → HTTP → Service → Pod`.
 
@@ -77,9 +73,6 @@ Here's the revised task breakdown reflecting that the connection between API Gat
 *   Your EKS cluster (`infra/main.tf`) is running.
 *   Your application, service, and ingress (`k8s/quantum-microservice-k8s-deployment.yaml`) are deployed, and the ALB created by the Ingress controller is functional and accessible over HTTP port 80 (as per `API.md`).
 *   The AWS Load Balancer Controller is installed in your EKS cluster.
-
----
-
 
 **Phase 1: Confirm ALB HTTP Setup**
 
@@ -128,7 +121,5 @@ Here's the revised task breakdown reflecting that the connection between API Gat
 
 **Phase 4: Verification and Documentation**
 
-18. **Task:** "Test the end-to-end flow by sending a request (like the example `curl` in `API.md`) to the API Gateway invoke URL (which will be HTTPS)."
-19. **Task:** "Update `API.md` or other project documentation to reflect the new API Gateway endpoint and the actual flow: `Client → HTTPS → API Gateway → HTTP → ALB → HTTP → Service → Pod`."
-
-This revised plan aligns with your requirement of using HTTP between the API Gateway and the ALB. Let me know when you're ready to proceed with the first task!
+18. **Task:** "Test the end-to-end flow by sending a request (like the example `curl` in `API.md`) to the API Gateway invoke URL (which will be HTTPS)." **(Completed)**
+19. **Task:** "Update `API.md` or other project documentation to reflect the new API Gateway endpoint and the actual flow: `Client → HTTPS → API Gateway → HTTP → ALB → HTTP → Service → Pod`." **(This update)**
