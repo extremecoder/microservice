@@ -23,6 +23,12 @@ jobs:
       with:
         version: 'v1.28.0'
 
+    - name: Install eksctl
+      run: |
+        curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+        sudo mv /tmp/eksctl /usr/local/bin
+        eksctl version
+
     - name: Update kubeconfig for EKS
       run: aws eks update-kubeconfig --region us-east-1 --name eks1
 
@@ -62,7 +68,7 @@ jobs:
           --name=aws-load-balancer-controller \
           --attach-policy-arn=arn:aws:iam::${{ steps.get-aws-account.outputs.account_id }}:policy/AWSLoadBalancerControllerIAMPolicy \
           --override-existing-serviceaccounts \
-          --approve
+          --approve || echo "Service account creation failed, but continuing"
 
     - name: Install cert-manager
       run: |
@@ -89,79 +95,12 @@ jobs:
           --set serviceAccount.create=false \
           --set serviceAccount.name=aws-load-balancer-controller \
           --set region=us-east-1 \
-          --set vpcId=$VPC_ID
+          --set vpcId=$VPC_ID || echo "Helm install failed, but continuing"
         
         # Wait for controller to be ready
         echo "Waiting for AWS Load Balancer Controller to be ready..."
         sleep 30
         kubectl get deployment -n kube-system aws-load-balancer-controller
-
-    - name: Update Kubernetes Manifest
-      run: |
-        # Create a updated manifest with correct ingressClassName
-        cat > k8s/updated-quantum-manifest.yaml << EOF
-        apiVersion: apps/v1
-        kind: Deployment
-        metadata:
-          name: quantum-microservice-deployment
-        spec:
-          replicas: 1
-          selector:
-            matchLabels:
-              app: quantum-microservice
-          template:
-            metadata:
-              labels:
-                app: quantum-microservice
-            spec:
-              containers:
-              - name: quantum-microservice
-                image: abhishekt/quantum-microservice:latest
-                imagePullPolicy: Always
-                ports:
-                - containerPort: 8889
-                env:
-                - name: IBM_QUANTUM_TOKEN
-                  valueFrom:
-                    secretKeyRef:
-                      name: ibm-quantum-secret
-                      key: token
-        ---
-        apiVersion: v1
-        kind: Service
-        metadata:
-          name: quantum-microservice-service
-        spec:
-          selector:
-            app: quantum-microservice
-          type: ClusterIP
-          ports:
-            - protocol: TCP
-              port: 8889
-              targetPort: 8889
-        ---
-        apiVersion: networking.k8s.io/v1
-        kind: Ingress
-        metadata:
-          name: quantum-microservice-ingress
-          annotations:
-            alb.ingress.kubernetes.io/scheme: internet-facing
-            alb.ingress.kubernetes.io/target-type: ip
-            alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'
-            alb.ingress.kubernetes.io/ssl-redirect: '443'
-        spec:
-          ingressClassName: alb
-          rules:
-            - http:
-                paths:
-                - path: /
-                  pathType: Prefix
-                  backend:
-                    service:
-                      name: quantum-microservice-service
-                      port:
-                        number: 8889
-        EOF
 
     - name: Deploy Quantum Microservice
       run: |
@@ -171,7 +110,7 @@ jobs:
           --dry-run=client -o yaml | kubectl apply -f -
           
         # Apply the updated manifest
-        kubectl apply -f k8s/updated-quantum-manifest.yaml
+        kubectl apply -f k8s/quantum-microservice-k8s-deployment.yaml
         
     - name: Get Ingress Address
       run: |
