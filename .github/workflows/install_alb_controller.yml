@@ -32,20 +32,30 @@ jobs:
     - name: Update kubeconfig for EKS
       run: aws eks update-kubeconfig --region us-east-1 --name eks1
 
-    - name: Clean up previous webhook configurations
-      run: |
-        # Remove existing webhook configurations that might be blocking operations
-        kubectl delete mutatingwebhookconfiguration aws-load-balancer-webhook --ignore-not-found
-        kubectl delete validatingwebhookconfiguration aws-load-balancer-webhook --ignore-not-found
-        kubectl delete -n kube-system service aws-load-balancer-webhook-service --ignore-not-found
-        kubectl delete -n kube-system deployment aws-load-balancer-controller --ignore-not-found
-        kubectl delete crd ingressclassparams.elbv2.k8s.aws --ignore-not-found
-        kubectl delete crd targetgroupbindings.elbv2.k8s.aws --ignore-not-found
-
     - name: Set up Helm
       uses: azure/setup-helm@v3
       with:
         version: 'v3.12.3'
+
+    - name: Clean up previous ALB controller installation
+      run: |
+        # Thoroughly clean up previous controller installation
+        helm uninstall aws-load-balancer-controller -n kube-system || echo "No Helm release to uninstall"
+        
+        # Remove all related resources
+        kubectl delete deployment aws-load-balancer-controller -n kube-system --ignore-not-found
+        kubectl delete service aws-load-balancer-webhook-service -n kube-system --ignore-not-found
+        kubectl delete mutatingwebhookconfiguration aws-load-balancer-webhook --ignore-not-found
+        kubectl delete validatingwebhookconfiguration aws-load-balancer-webhook --ignore-not-found
+        kubectl delete clusterrole aws-load-balancer-controller-role --ignore-not-found
+        kubectl delete clusterrolebinding aws-load-balancer-controller-rolebinding --ignore-not-found
+        
+        # Clean up CRDs
+        kubectl delete crd ingressclassparams.elbv2.k8s.aws --ignore-not-found
+        kubectl delete crd targetgroupbindings.elbv2.k8s.aws --ignore-not-found
+        
+        # Give system time to clean up resources
+        sleep 10
 
     - name: Create IAM Policy for ALB Controller
       run: |
@@ -76,11 +86,14 @@ jobs:
         echo "Waiting for cert-manager to be ready..."
         kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout=180s || true
 
-    - name: Install ALB Controller with Helm
+    - name: Install ALB Controller CRDs
       run: |
-        # First apply CRDs separately
-        kubectl apply -k "github.com/aws/eks-charts/stable/aws-load-balancer-controller/crds?ref=master" || echo "CRD installation failed but continuing"
-        
+        kubectl apply -k "github.com/aws/eks-charts/stable/aws-load-balancer-controller/crds?ref=master"
+        # Give the CRDs time to be properly registered
+        sleep 10
+
+    - name: Install ALB Controller
+      run: |
         # Add and update Helm repo
         helm repo add eks https://aws.github.io/eks-charts
         helm repo update
@@ -88,19 +101,20 @@ jobs:
         # Get VPC ID
         VPC_ID=$(aws eks describe-cluster --name eks1 --query "cluster.resourcesVpcConfig.vpcId" --output text)
         
-        # Install controller
-        helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+        # Install controller with a different release name to avoid conflicts
+        helm install aws-lb-controller eks/aws-load-balancer-controller \
           -n kube-system \
           --set clusterName=eks1 \
           --set serviceAccount.create=false \
           --set serviceAccount.name=aws-load-balancer-controller \
           --set region=us-east-1 \
-          --set vpcId=$VPC_ID || echo "Helm install failed, but continuing"
+          --set vpcId=$VPC_ID
         
-        # Wait for controller to be ready
+        # Wait for controller to become ready
         echo "Waiting for AWS Load Balancer Controller to be ready..."
         sleep 30
-        kubectl get deployment -n kube-system aws-load-balancer-controller
+        kubectl wait --for=condition=Available deployment aws-lb-controller-aws-load-balancer-controller -n kube-system --timeout=120s || true
+        kubectl get deployment -n kube-system aws-lb-controller-aws-load-balancer-controller || kubectl get deployment -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller
 
     - name: Deploy Quantum Microservice
       run: |
@@ -115,5 +129,5 @@ jobs:
     - name: Get Ingress Address
       run: |
         echo "Waiting for ALB to be provisioned (this may take a few minutes)..."
-        sleep 60
+        sleep 90
         kubectl get ingress quantum-microservice-ingress
