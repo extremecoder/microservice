@@ -1,0 +1,86 @@
+name: Install ALB Controller and Deploy Service
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Update kubeconfig for EKS
+      run: aws eks update-kubeconfig --region us-east-1 --name eks1
+
+    - name: Set up Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: 'v3.12.3'
+
+    - name: Create IAM Policy for ALB Controller
+      run: |
+        curl -o iam-policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/main/docs/install/iam_policy.json
+        aws iam create-policy \
+            --policy-name AWSLoadBalancerControllerIAMPolicy \
+            --policy-document file://iam-policy.json || echo "Policy may already exist"
+
+    - name: Get AWS Account ID
+      id: get-aws-account
+      run: |
+        AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
+        echo "account_id=$AWS_ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+    - name: Create IAM Service Account
+      run: |
+        eksctl create iamserviceaccount \
+          --cluster=eks1 \
+          --namespace=kube-system \
+          --name=aws-load-balancer-controller \
+          --attach-policy-arn=arn:aws:iam::${{ steps.get-aws-account.outputs.account_id }}:policy/AWSLoadBalancerControllerIAMPolicy \
+          --override-existing-serviceaccounts \
+          --approve || echo "Service account may already exist"
+
+    - name: Install ALB Controller
+      run: |
+        helm repo add eks https://aws.github.io/eks-charts
+        helm repo update
+        
+        helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+          -n kube-system \
+          --set clusterName=eks1 \
+          --set serviceAccount.create=false \
+          --set serviceAccount.name=aws-load-balancer-controller
+          
+    - name: Verify ALB Controller Installation
+      run: |
+        kubectl -n kube-system get deployment aws-load-balancer-controller
+        
+    - name: Deploy Quantum Microservice
+      run: |
+        # Create IBM Quantum secret if needed
+        kubectl create secret generic ibm-quantum-secret \
+          --from-literal=token=${{ secrets.IBM_QUANTUM_TOKEN }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+          
+        # Apply the updated manifest
+        kubectl apply -f quantum-microservice-k8s-deployment.yaml
+        
+    - name: Get Ingress Address
+      run: |
+        echo "Waiting for ALB to be provisioned (this may take a few minutes)..."
+        sleep 30
+        kubectl get ingress quantum-microservice-ingress
