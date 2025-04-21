@@ -44,7 +44,13 @@ jobs:
         AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text)
         echo "account_id=$AWS_ACCOUNT_ID" >> $GITHUB_OUTPUT
 
-    - name: Create IAM Service Account
+    - name: Install cert-manager
+      run: |
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.1/cert-manager.yaml
+        # Wait for cert-manager to be ready
+        kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout=180s
+
+    - name: Create Service Account and CRDs for ALB controller
       run: |
         eksctl create iamserviceaccount \
           --cluster=eks1 \
@@ -52,22 +58,39 @@ jobs:
           --name=aws-load-balancer-controller \
           --attach-policy-arn=arn:aws:iam::${{ steps.get-aws-account.outputs.account_id }}:policy/AWSLoadBalancerControllerIAMPolicy \
           --override-existing-serviceaccounts \
-          --approve || echo "Service account may already exist"
-
+          --approve
+        
+        # Download and apply the latest CRDs
+        kubectl apply -k "github.com/aws/eks-charts/stable/aws-load-balancer-controller/crds?ref=master"
+        
     - name: Install ALB Controller
       run: |
         helm repo add eks https://aws.github.io/eks-charts
         helm repo update
         
-        helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+        # Uninstall existing controller if present
+        helm uninstall aws-load-balancer-controller -n kube-system || echo "No existing controller found"
+        
+        # Install the controller with specific region and VPC ID
+        VPC_ID=$(aws eks describe-cluster --name eks1 --query "cluster.resourcesVpcConfig.vpcId" --output text)
+        
+        helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
           -n kube-system \
           --set clusterName=eks1 \
           --set serviceAccount.create=false \
-          --set serviceAccount.name=aws-load-balancer-controller
+          --set serviceAccount.name=aws-load-balancer-controller \
+          --set region=us-east-1 \
+          --set vpcId=$VPC_ID \
+          --set enableCertManager=true \
+          --set enableShield=false \
+          --set enableWaf=false \
+          --set enableWafv2=false
           
-    - name: Verify ALB Controller Installation
+    - name: Wait for ALB Controller to be ready
       run: |
-        kubectl -n kube-system get deployment aws-load-balancer-controller
+        echo "Waiting for AWS Load Balancer Controller to be ready..."
+        kubectl wait --for=condition=Available deployment aws-load-balancer-controller -n kube-system --timeout=180s
+        kubectl get deployment -n kube-system aws-load-balancer-controller
         
     - name: Deploy Quantum Microservice
       run: |
@@ -76,11 +99,11 @@ jobs:
           --from-literal=token=${{ secrets.IBM_QUANTUM_TOKEN }} \
           --dry-run=client -o yaml | kubectl apply -f -
           
-        # Apply the updated manifest
+        # Apply the updated manifest with corrected ingress class
         kubectl apply -f k8s/quantum-microservice-k8s-deployment.yaml
         
     - name: Get Ingress Address
       run: |
         echo "Waiting for ALB to be provisioned (this may take a few minutes)..."
-        sleep 30
+        sleep 90
         kubectl get ingress quantum-microservice-ingress

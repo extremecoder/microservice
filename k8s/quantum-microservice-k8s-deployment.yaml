@@ -44,14 +44,14 @@ kind: Ingress
 metadata:
   name: quantum-microservice-ingress
   annotations:
-    kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'
-    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
     alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/group.name: "quantum-api"
     
 spec:
+  ingressClassName: alb  # Use this instead of the deprecated annotation
   rules:
     - http:
         paths:
