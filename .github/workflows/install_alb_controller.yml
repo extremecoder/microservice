@@ -77,7 +77,7 @@ jobs:
           --dry-run=client -o yaml | kubectl apply -f -
           
         # Apply the updated manifest
-        kubectl apply -f quantum-microservice-k8s-deployment.yaml
+        kubectl apply -f k8s/quantum-microservice-k8s-deployment.yaml
         
     - name: Get Ingress Address
       run: |
