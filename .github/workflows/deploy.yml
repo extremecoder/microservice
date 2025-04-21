@@ -1,4 +1,4 @@
-name: Minimal EKS Deploy
+name: Deploy EKS and API Gateway
 
 on:
   workflow_dispatch:
@@ -21,25 +21,62 @@ jobs:
     - name: Set up Terraform
       uses: hashicorp/setup-terraform@v3
 
-    - name: Terraform init and apply
+    - name: Terraform Init # Step 7: Initialize Terraform early
       working-directory: infra
-      run: |
-        terraform init
-        terraform apply -auto-approve
+      run: terraform init
 
     - name: Set up kubectl
       uses: azure/setup-kubectl@v3
       with:
-        version: 'v1.28.0'
+        version: 'v1.28.0' # Use a specific version consistent with other workflows if needed
 
     - name: Update kubeconfig for EKS
-      run: aws eks update-kubeconfig --region us-east-1 --name eks1
+      run: aws eks update-kubeconfig --region us-east-1 --name eks1 # Make sure cluster name 'eks1' is correct
 
-    - name: Create IBM Quantum secret in EKS
+    - name: Create/Update IBM Quantum secret in EKS
       run: |
         kubectl create secret generic ibm-quantum-secret \
           --from-literal=token=${{ secrets.IBM_QUANTUM_TOKEN }} \
           --dry-run=client -o yaml | kubectl apply -f -
 
-    - name: Deploy Docker image to EKS
+    - name: Deploy Kubernetes Manifests # Step 8: Apply K8s resources
       run: kubectl apply -f k8s/quantum-microservice-k8s-deployment.yaml
+
+    - name: Wait for Ingress and Get ALB DNS Name # Step 9: Wait and get DNS
+      id: get_alb_dns # Give this step an ID to reference its output
+      run: |
+        echo "Waiting for ALB Ingress to provision..."
+        # Wait for the Ingress status to have a loadBalancer entry (up to 5 minutes)
+        # Increased timeout and added simple retry logic
+        count=0
+        while [ -z "$ALB_DNS_NAME" ] && [ $count -lt 15 ]; do
+          ALB_DNS_NAME=$(kubectl get ingress quantum-microservice-ingress -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null)
+          if [ -z "$ALB_DNS_NAME" ]; then
+            echo "ALB DNS name not available yet, waiting 20 seconds..."
+            sleep 20
+            count=$((count+1))
+          fi
+        done
+
+        if [ -z "$ALB_DNS_NAME" ]; then
+          echo "Error: Timed out waiting for ALB DNS name."
+          kubectl get ingress quantum-microservice-ingress -n default -o yaml # Print ingress details for debugging
+          exit 1
+        fi
+
+        echo "Found ALB DNS Name: ${ALB_DNS_NAME}"
+        echo "ALB_DNS_NAME=${ALB_DNS_NAME}" >> $GITHUB_ENV
+        echo "alb_hostname=${ALB_DNS_NAME}" >> $GITHUB_OUTPUT # Output for potential use in other steps/jobs
+
+    - name: Apply Terraform (EKS + API Gateway) # Step 10: Apply all TF with DNS name
+      id: tf_apply # Give step an ID to reference output
+      working-directory: infra
+      run: |
+        terraform apply -var="alb_dns_name=${{ env.ALB_DNS_NAME }}" -auto-approve
+        echo "invoke_url=$(terraform output -raw api_gateway_invoke_url)" >> $GITHUB_OUTPUT
+
+    - name: Test API Gateway Health Endpoint # Step 11 (Optional): Test endpoint
+      run: |
+        echo "Testing API Gateway endpoint: ${{ steps.tf_apply.outputs.invoke_url }}/api/v1/health"
+        curl -sf ${{ steps.tf_apply.outputs.invoke_url }}/api/v1/health || exit 1
+        echo "API Gateway health check successful!"

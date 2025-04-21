@@ -48,5 +48,7 @@ COPY ./app /microservice/app
 # Make port 8889 available
 EXPOSE 8889
 
-# Define the command to run your app
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8889"] 
+# Define the command to run your app, enabling proxy headers
+# Using '*' for forwarded-allow-ips is convenient for testing but less secure for production.
+# Consider replacing '*' with your VPC CIDR or specific ALB subnet CIDRs in production.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8889", "--proxy-headers", "--forwarded-allow-ips='*'"] 
