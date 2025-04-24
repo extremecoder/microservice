@@ -90,3 +90,15 @@
 - [ ] Example client code for Python
 - [ ] README with clear usage instructions
 - [ ] Environment variables documentation
+
+## Sprint 3: Frontend Integration (2025-07-30)
+
+### Task 8: Configure Frontend Routing
+**Description:** Configure Kubernetes Ingress to route traffic to the existing frontend application and the backend API. Update API Gateway if necessary (Done - explicit routes added). Ensure backend service exists.
+**Acceptance Criteria:**
+- [ ] Backend Kubernetes Service (`quantum-microservice-service:8889`) exists and targets the correct deployment pods.
+- [ ] Kubernetes Ingress resource created/updated in `k8s/ingress.yaml`.
+- [ ] Ingress rule routes `/api/*` traffic to `quantum-microservice-service:8889`.
+- [ ] Ingress rule routes `/*` traffic to `frontend-app-service:80`.
+- [ ] Ingress uses `ingressClassName: alb`.
+- [ ] Traffic is correctly routed via the API Gateway URL.
