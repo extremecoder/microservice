@@ -2,6 +2,7 @@
 variable "alb_dns_name" {
   description = "The DNS name of the Application Load Balancer"
   type        = string
+  default = "k8s-default-quantumm-be275525f6-1236523312.us-east-1.elb.amazonaws.com"
 }
 
 # Task 6: API Gateway HTTP API resource
